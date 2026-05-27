@@ -9,11 +9,8 @@ Trip itinerary planner + expense tracker. Built with React, TanStack Router, Sup
    npm install
    ```
 
-2. Make sure your `.env` file has:
-   ```
-   VITE_SUPABASE_URL=https://ypyydruzkfvuqgqeyiza.supabase.co
-   VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-   ```
+2. Make sure you have an `.env` file set up:
+  
 
 3. Run dev server:
    ```bash
