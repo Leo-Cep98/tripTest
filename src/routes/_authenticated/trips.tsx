@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Plus, MapPin, CalendarDays, Wallet, ArrowRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 
 export const Route = createFileRoute("/_authenticated/trips")({
-  head: () => ({ meta: [{ title: "Your trips — Pandas Wanderlust" }] }),
   component: TripsPage,
 });
 
@@ -32,6 +31,10 @@ function TripsPage() {
   const { user } = useAuth();
   const [trips, setTrips] = useState<Trip[] | null>(null);
   const [open, setOpen] = useState(false);
+  const matches = useRouterState({ select: (s) => s.matches });
+  const onDetail = matches.some((m) => m.routeId === "/_authenticated/trips/$tripId");
+
+  if (onDetail) return <Outlet />;
 
   async function load() {
     const { data, error } = await supabase
