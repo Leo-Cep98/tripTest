@@ -967,7 +967,6 @@ function AddPhotoDialog({ onAdd }: { onAdd: (url: string) => Promise<void> | voi
               <Label>Image URL</Label>
               <Input
                 type="url"
-                required
                 placeholder="https://…/photo.jpg"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
