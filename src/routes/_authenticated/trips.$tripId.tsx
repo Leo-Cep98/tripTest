@@ -129,62 +129,61 @@ function TripDetail() {
 
   useEffect(() => {
     if (user) loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, tripId]);
 
-  // Parse trip metadata (photos)
   const tripParsed = useMemo(() => {
     if (!trip) return { text: "", meta: {} as TripMeta };
     return parseMeta<TripMeta>(trip.notes);
   }, [trip]);
 
-  // Parse each item's metadata (price, link) once
   const itemsWithMeta = useMemo(
     () =>
       items.map((it) => {
         const parsed = parseMeta<ItineraryMeta>(it.notes);
-        return { ...it, noteText: parsed.text, price: parsed.meta.price ?? 0, link: parsed.meta.link ?? "" };
+        return {
+          ...it,
+          noteText: parsed.text,
+          price: parsed.meta.price ?? 0,
+          link: parsed.meta.link ?? "",
+        };
       }),
     [items],
   );
 
-  const itemsByDay = useMemo(() => {
-    return itemsWithMeta.reduce<Record<string, typeof itemsWithMeta>>((acc, it) => {
-      (acc[it.day_date] ||= []).push(it);
-      return acc;
-    }, {});
-  }, [itemsWithMeta]);
+  const itemsByDay = useMemo(
+    () =>
+      itemsWithMeta.reduce<Record<string, typeof itemsWithMeta>>((acc, it) => {
+        (acc[it.day_date] ||= []).push(it);
+        return acc;
+      }, {}),
+    [itemsWithMeta],
+  );
 
   const dayKeys = useMemo(() => Object.keys(itemsByDay).sort(), [itemsByDay]);
 
-  // Reset active day if it disappears
   useEffect(() => {
-    if (activeDay !== "all" && !dayKeys.includes(activeDay)) {
-      setActiveDay(dayKeys[0] ?? "all");
-    }
+    if (activeDay !== "all" && !dayKeys.includes(activeDay)) setActiveDay(dayKeys[0] ?? "all");
   }, [dayKeys, activeDay]);
 
-  if (!trip) {
+  if (!trip)
     return <div className="mx-auto max-w-5xl px-6 py-16 text-muted-foreground">Loading trip…</div>;
-  }
 
+  // ── Budget math ──────────────────────────────────────────────────────────
   const totalSpent = expenses.reduce((s, e) => s + Number(e.amount), 0);
   const totalPlanned = itemsWithMeta.reduce((s, it) => s + Number(it.price || 0), 0);
+  const totalCommitted = totalSpent + totalPlanned; // ← combined for budget bar
   const budget = Number(trip.budget ?? 0);
-  const budgetPct = budget > 0 ? Math.min(100, (totalSpent / budget) * 100) : 0;
-  const plannedPct = budget > 0 ? Math.min(100, (totalPlanned / budget) * 100) : 0;
-  const plannedDelta = budget - totalPlanned;
-  const plannedAligned = budget === 0 ? null : totalPlanned <= budget;
+  const committedPct = budget > 0 ? Math.min(100, (totalCommitted / budget) * 100) : 0;
+  const spentPct = budget > 0 ? Math.min(100, (totalSpent / budget) * 100) : 0;
+  const remaining = budget - totalCommitted;
+  const overBudget = budget > 0 && totalCommitted > budget;
 
   const photos: string[] = Array.isArray(tripParsed.meta.photos) ? tripParsed.meta.photos : [];
 
   async function updateTripPhotos(next: string[]) {
     if (!trip) return;
     const newNotes = buildNotes(tripParsed.text, { ...tripParsed.meta, photos: next });
-    const { error } = await supabase
-      .from("trips")
-      .update({ notes: newNotes })
-      .eq("id", trip.id);
+    const { error } = await supabase.from("trips").update({ notes: newNotes }).eq("id", trip.id);
     if (error) {
       toast.error(error.message);
       return;
@@ -193,7 +192,6 @@ function TripDetail() {
   }
 
   const dayIndex = activeDay === "all" ? -1 : dayKeys.indexOf(activeDay);
-
   function navigateDay(direction: 1 | -1) {
     if (activeDay === "all" || dayIndex < 0) return;
     const next = dayIndex + direction;
@@ -210,7 +208,7 @@ function TripDetail() {
         <ArrowLeft className="h-4 w-4" /> All trips
       </Link>
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="mt-4 overflow-hidden rounded-3xl bg-hero p-8 text-deep-foreground shadow-elegant md:p-10">
         <div className="flex flex-wrap items-start justify-between gap-6">
           <div>
@@ -227,39 +225,72 @@ function TripDetail() {
               </p>
             )}
           </div>
-          <div className="min-w-[260px] space-y-3 rounded-2xl bg-white/10 p-5 backdrop-blur">
+
+          {/* ── Budget card ── */}
+          <div className="min-w-[280px] space-y-4 rounded-2xl bg-white/10 p-5 backdrop-blur">
+            {/* Total committed (itinerary + expenses) vs budget */}
             <div>
-              <p className="text-xs uppercase tracking-widest text-mint">Spent so far</p>
+              <div className="flex items-baseline justify-between">
+                <p className="text-xs uppercase tracking-widest text-mint">Total committed</p>
+                {budget > 0 && (
+                  <p className="text-xs text-deep-foreground/60">
+                    of {trip.currency} {budget.toLocaleString()}
+                  </p>
+                )}
+              </div>
               <p className="mt-1 font-display text-2xl font-semibold">
-                {trip.currency} {totalSpent.toFixed(2)}
-                <span className="ml-1 text-base text-deep-foreground/60">
-                  / {budget.toLocaleString()}
+                {trip.currency} {totalCommitted.toFixed(2)}
+              </p>
+              {/* Stacked bar: planned (teal) + spent (mint) */}
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+                <div className="flex h-full">
+                  <div
+                    className="h-full bg-mint/70 transition-all"
+                    style={{
+                      width: `${Math.min(100, (totalPlanned / (budget || totalCommitted || 1)) * 100)}%`,
+                    }}
+                  />
+                  <div
+                    className="h-full bg-white/70 transition-all"
+                    style={{
+                      width: `${Math.min(100, (totalSpent / (budget || totalCommitted || 1)) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+              {/* Breakdown */}
+              <div className="mt-2 flex justify-between text-xs text-deep-foreground/70">
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-full bg-mint/70" />
+                  Planned {trip.currency} {totalPlanned.toFixed(2)}
                 </span>
-              </p>
-              <Progress value={budgetPct} className="mt-2 h-1.5 bg-white/20" />
-              <p className="mt-1 text-xs text-deep-foreground/70">
-                {budgetPct.toFixed(0)}% used · {expenses.length} expense
-                {expenses.length === 1 ? "" : "s"}
-              </p>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-full bg-white/70" />
+                  Spent {trip.currency} {totalSpent.toFixed(2)}
+                </span>
+              </div>
             </div>
-            <div className="border-t border-white/15 pt-3">
-              <p className="text-xs uppercase tracking-widest text-mint">Planned (itinerary)</p>
-              <p className="mt-1 font-display text-xl font-semibold">
-                {trip.currency} {totalPlanned.toFixed(2)}
-              </p>
-              <Progress value={plannedPct} className="mt-2 h-1.5 bg-white/20" />
-              {plannedAligned === null ? (
-                <p className="mt-1 text-xs text-deep-foreground/70">Set a budget to see alignment.</p>
-              ) : plannedAligned ? (
-                <p className="mt-1 text-xs text-mint">
-                  ✓ Aligned — {trip.currency} {Math.abs(plannedDelta).toFixed(2)} headroom
+
+            {/* Remaining / over-budget */}
+            {budget > 0 && (
+              <div className="border-t border-white/15 pt-3">
+                {overBudget ? (
+                  <p className="text-xs text-orange-300">
+                    ⚠ Over budget by {trip.currency} {Math.abs(remaining).toFixed(2)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-mint">
+                    ✓ {trip.currency} {remaining.toFixed(2)} headroom remaining
+                  </p>
+                )}
+                <Progress value={committedPct} className="mt-2 h-1 bg-white/20" />
+                <p className="mt-1 text-xs text-deep-foreground/60">
+                  {committedPct.toFixed(0)}% of budget · {expenses.length} expense
+                  {expenses.length === 1 ? "" : "s"} · {items.length} itinerary item
+                  {items.length === 1 ? "" : "s"}
                 </p>
-              ) : (
-                <p className="mt-1 text-xs text-orange-300">
-                  ⚠ Over budget by {trip.currency} {Math.abs(plannedDelta).toFixed(2)}
-                </p>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -277,36 +308,34 @@ function TripDetail() {
           </TabsTrigger>
         </TabsList>
 
-        {/* ITINERARY */}
+        {/* ── ITINERARY ── */}
         <TabsContent value="itinerary" className="mt-6">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-muted-foreground">
-              Total planned:{" "}
+              Planned total:{" "}
               <span className="font-medium text-foreground">
                 {trip.currency} {totalPlanned.toFixed(2)}
               </span>
               {budget > 0 && (
-                <>
-                  {" · "}
-                  Budget:{" "}
-                  <span className="font-medium text-foreground">
-                    {trip.currency} {budget.toLocaleString()}
-                  </span>
-                  {" · "}
-                  {plannedAligned ? (
-                    <span className="font-medium text-teal">on budget</span>
-                  ) : (
-                    <span className="font-medium text-destructive">
-                      over by {trip.currency} {Math.abs(plannedDelta).toFixed(2)}
-                    </span>
-                  )}
-                </>
+                <span
+                  className={`ml-2 font-medium ${totalPlanned <= budget ? "text-teal" : "text-destructive"}`}
+                >
+                  (
+                  {totalPlanned <= budget
+                    ? "on budget"
+                    : `over by ${trip.currency} ${(totalPlanned - budget).toFixed(2)}`}
+                  )
+                </span>
               )}
             </div>
-            <AddItineraryDialog tripId={tripId} userId={user!.id} currency={trip.currency} onAdded={loadAll} />
+            <AddItineraryDialog
+              tripId={tripId}
+              userId={user!.id}
+              currency={trip.currency}
+              onAdded={loadAll}
+            />
           </div>
 
-          {/* Day navigation */}
           {dayKeys.length > 0 && (
             <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border bg-card p-2 shadow-card">
               <Button
@@ -315,7 +344,6 @@ function TripDetail() {
                 className="h-8 w-8"
                 onClick={() => navigateDay(-1)}
                 disabled={activeDay === "all" || dayIndex <= 0}
-                aria-label="Previous day"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -323,11 +351,7 @@ function TripDetail() {
                 <button
                   type="button"
                   onClick={() => setActiveDay("all")}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                    activeDay === "all"
-                      ? "bg-deep text-deep-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-muted/70"
-                  }`}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${activeDay === "all" ? "bg-deep text-deep-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}
                 >
                   All days
                 </button>
@@ -336,11 +360,7 @@ function TripDetail() {
                     key={d}
                     type="button"
                     onClick={() => setActiveDay(d)}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                      activeDay === d
-                        ? "bg-deep text-deep-foreground"
-                        : "bg-muted text-muted-foreground hover:bg-muted/70"
-                    }`}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${activeDay === d ? "bg-deep text-deep-foreground" : "bg-muted text-muted-foreground hover:bg-muted/70"}`}
                   >
                     Day {idx + 1} · {format(new Date(d), "MMM d")}
                   </button>
@@ -352,7 +372,6 @@ function TripDetail() {
                 className="h-8 w-8"
                 onClick={() => navigateDay(1)}
                 disabled={activeDay === "all" || dayIndex >= dayKeys.length - 1}
-                aria-label="Next day"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -360,15 +379,19 @@ function TripDetail() {
           )}
 
           {dayKeys.length === 0 ? (
-            <EmptyMini icon="🗓️" title="No plans yet" desc="Drop in your first activity or reservation." />
+            <EmptyMini
+              icon="🗓️"
+              title="No plans yet"
+              desc="Drop in your first activity or reservation."
+            />
           ) : (
             <div className="space-y-8">
-              {(activeDay === "all" ? dayKeys : [activeDay]).map((day, _i) => {
+              {(activeDay === "all" ? dayKeys : [activeDay]).map((day) => {
                 const dayItems = itemsByDay[day] ?? [];
                 const dayTotal = dayItems.reduce((s, it) => s + Number(it.price || 0), 0);
                 const realIdx = dayKeys.indexOf(day);
                 return (
-                  <div key={day} id={`day-${day}`}>
+                  <div key={day}>
                     <div className="mb-3 flex items-baseline justify-between">
                       <h3 className="font-display text-lg font-semibold text-teal">
                         Day {realIdx + 1} · {format(new Date(day), "EEEE · MMM d")}
@@ -400,29 +423,29 @@ function TripDetail() {
                                 </span>
                               </TableCell>
                               <TableCell>
-                                <div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="font-medium">{it.title}</span>
-                                    {it.category && (
-                                      <span
-                                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
-                                          CAT_COLOR[it.category] || CAT_COLOR.other
-                                        }`}
-                                      >
-                                        {it.category}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {it.noteText && (
-                                    <p className="mt-1 text-xs text-muted-foreground">{it.noteText}</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium">{it.title}</span>
+                                  {it.category && (
+                                    <span
+                                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${CAT_COLOR[it.category] || CAT_COLOR.other}`}
+                                    >
+                                      {it.category}
+                                    </span>
                                   )}
                                 </div>
+                                {it.noteText && (
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {it.noteText}
+                                  </p>
+                                )}
                               </TableCell>
                               <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
                                 {it.location || "—"}
                               </TableCell>
                               <TableCell className="text-right font-medium tabular-nums">
-                                {it.price > 0 ? `${trip.currency} ${Number(it.price).toFixed(2)}` : "—"}
+                                {it.price > 0
+                                  ? `${trip.currency} ${Number(it.price).toFixed(2)}`
+                                  : "—"}
                               </TableCell>
                               <TableCell className="text-center">
                                 {it.link ? (
@@ -431,7 +454,6 @@ function TripDetail() {
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center justify-center rounded-md p-1.5 text-teal hover:bg-muted"
-                                    title={it.link}
                                   >
                                     <ExternalLink className="h-4 w-4" />
                                   </a>
@@ -457,7 +479,10 @@ function TripDetail() {
                           ))}
                           {dayItems.length > 0 && (
                             <TableRow>
-                              <TableCell colSpan={3} className="text-right text-xs uppercase tracking-wider text-muted-foreground">
+                              <TableCell
+                                colSpan={3}
+                                className="text-right text-xs uppercase tracking-wider text-muted-foreground"
+                              >
                                 Day total
                               </TableCell>
                               <TableCell className="text-right font-display font-semibold tabular-nums">
@@ -476,7 +501,7 @@ function TripDetail() {
           )}
         </TabsContent>
 
-        {/* PHOTOS */}
+        {/* ── PHOTOS ── */}
         <TabsContent value="photos" className="mt-6">
           <div className="mb-4 flex items-center justify-between">
             <div className="text-sm text-muted-foreground">
@@ -484,8 +509,7 @@ function TripDetail() {
             </div>
             <AddPhotoDialog
               onAdd={async (url) => {
-                const next = [...photos, url];
-                await updateTripPhotos(next);
+                await updateTripPhotos([...photos, url]);
               }}
             />
           </div>
@@ -493,21 +517,22 @@ function TripDetail() {
             <EmptyMini
               icon="📷"
               title="No photos yet"
-              desc="Paste image URLs (from Google Photos, Imgur, your hosting, etc.) to build a visual log."
+              desc="Paste image URLs to build a visual log."
             />
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {photos.map((url, idx) => (
-                <div key={`${url}-${idx}`} className="group relative aspect-square overflow-hidden rounded-xl border bg-muted shadow-card">
+                <div
+                  key={`${url}-${idx}`}
+                  className="group relative aspect-square overflow-hidden rounded-xl border bg-muted shadow-card"
+                >
                   <img
                     src={url}
                     alt={`Trip photo ${idx + 1}`}
                     className="h-full w-full object-cover transition group-hover:scale-105"
                     onError={(e) => {
-                      const tgt = e.currentTarget;
-                      tgt.style.display = "none";
-                      const sibling = tgt.nextElementSibling as HTMLElement | null;
-                      if (sibling) sibling.style.display = "flex";
+                      e.currentTarget.style.display = "none";
+                      (e.currentTarget.nextElementSibling as HTMLElement)!.style.display = "flex";
                     }}
                   />
                   <div className="hidden h-full w-full items-center justify-center text-xs text-muted-foreground">
@@ -516,12 +541,10 @@ function TripDetail() {
                   <button
                     type="button"
                     onClick={async () => {
-                      if (!confirm("Remove this photo?")) return;
-                      const next = photos.filter((_, i) => i !== idx);
-                      await updateTripPhotos(next);
+                      if (!confirm("Remove?")) return;
+                      await updateTripPhotos(photos.filter((_, i) => i !== idx));
                     }}
                     className="absolute right-2 top-2 rounded-full bg-black/60 p-1 text-white opacity-0 transition group-hover:opacity-100"
-                    aria-label="Remove photo"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -531,11 +554,11 @@ function TripDetail() {
           )}
         </TabsContent>
 
-        {/* EXPENSES */}
+        {/* ── EXPENSES ── */}
         <TabsContent value="expenses" className="mt-6">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <TrendingUp className="h-4 w-4 text-teal" /> Running total:{" "}
+              <TrendingUp className="h-4 w-4 text-teal" /> Logged expenses:{" "}
               <span className="font-medium text-foreground">
                 {trip.currency} {totalSpent.toFixed(2)}
               </span>
@@ -548,7 +571,11 @@ function TripDetail() {
             />
           </div>
           {expenses.length === 0 ? (
-            <EmptyMini icon="💸" title="Nothing logged yet" desc="Log expenses as you go to stay on budget." />
+            <EmptyMini
+              icon="💸"
+              title="Nothing logged yet"
+              desc="Log expenses as you go to stay on budget."
+            />
           ) : (
             <div className="overflow-hidden rounded-2xl border bg-card shadow-card">
               {expenses.map((e, idx) => (
@@ -557,9 +584,7 @@ function TripDetail() {
                   className={`group flex items-center gap-4 px-5 py-4 ${idx > 0 ? "border-t" : ""}`}
                 >
                   <span
-                    className={`rounded-md px-2 py-1 text-xs font-medium capitalize ${
-                      CAT_COLOR[e.category] || CAT_COLOR.other
-                    }`}
+                    className={`rounded-md px-2 py-1 text-xs font-medium capitalize ${CAT_COLOR[e.category] || CAT_COLOR.other}`}
                   >
                     {e.category}
                   </span>
@@ -626,6 +651,11 @@ function EmptyMini({ icon, title, desc }: { icon: string; title: string; desc: s
   );
 }
 
+// ── Scrollable dialog wrapper ──────────────────────────────────────────────
+function ScrollableDialogBody({ children }: { children: React.ReactNode }) {
+  return <div className="max-h-[65vh] overflow-y-auto px-1 pr-2">{children}</div>;
+}
+
 function AddItineraryDialog({
   tripId,
   userId,
@@ -660,7 +690,6 @@ function AddItineraryDialog({
           <DialogTitle className="font-display text-2xl">Add to itinerary</DialogTitle>
         </DialogHeader>
         <form
-          className="space-y-4"
           onSubmit={async (e) => {
             e.preventDefault();
             const notesPayload = buildNotes(form.notes, {
@@ -692,93 +721,98 @@ function AddItineraryDialog({
             onAdded();
           }}
         >
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Date</Label>
-              <Input
-                type="date"
-                required
-                value={form.day_date}
-                onChange={(e) => setForm({ ...form, day_date: e.target.value })}
-              />
+          {/* ✅ Scrollable body */}
+          <ScrollableDialogBody>
+            <div className="space-y-4 py-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Date</Label>
+                  <Input
+                    type="date"
+                    required
+                    value={form.day_date}
+                    onChange={(e) => setForm({ ...form, day_date: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Time</Label>
+                  <Input
+                    type="time"
+                    value={form.start_time}
+                    onChange={(e) => setForm({ ...form, start_time: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Title</Label>
+                <Input
+                  required
+                  placeholder="Sushi at Tsukiji"
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Category</Label>
+                  <Select
+                    value={form.category}
+                    onValueChange={(v) => setForm({ ...form, category: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ITEM_CATEGORIES.map((c) => (
+                        <SelectItem key={c} value={c} className="capitalize">
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Price ({currency})</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={form.price}
+                    onChange={(e) => setForm({ ...form, price: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Location</Label>
+                <Input
+                  placeholder="Tsukiji Outer Market"
+                  value={form.location}
+                  onChange={(e) => setForm({ ...form, location: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="inline-flex items-center gap-1.5">
+                  <LinkIcon className="h-3.5 w-3.5" /> Booking / Info link
+                </Label>
+                <Input
+                  type="url"
+                  placeholder="https://booking.com/…"
+                  value={form.link}
+                  onChange={(e) => setForm({ ...form, link: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Notes</Label>
+                <Textarea
+                  rows={2}
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Time</Label>
-              <Input
-                type="time"
-                value={form.start_time}
-                onChange={(e) => setForm({ ...form, start_time: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Title</Label>
-            <Input
-              required
-              placeholder="Sushi at Tsukiji"
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Category</Label>
-              <Select
-                value={form.category}
-                onValueChange={(v) => setForm({ ...form, category: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ITEM_CATEGORIES.map((c) => (
-                    <SelectItem key={c} value={c} className="capitalize">
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Price ({currency})</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0.00"
-                value={form.price}
-                onChange={(e) => setForm({ ...form, price: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Location</Label>
-            <Input
-              placeholder="Tsukiji Outer Market"
-              value={form.location}
-              onChange={(e) => setForm({ ...form, location: e.target.value })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="inline-flex items-center gap-1.5">
-              <LinkIcon className="h-3.5 w-3.5" /> Booking / Info link
-            </Label>
-            <Input
-              type="url"
-              placeholder="https://booking.com/…"
-              value={form.link}
-              onChange={(e) => setForm({ ...form, link: e.target.value })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Notes</Label>
-            <Textarea
-              rows={2}
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            />
-          </div>
-          <DialogFooter>
+          </ScrollableDialogBody>
+          <DialogFooter className="mt-4">
             <Button type="submit" className="bg-deep text-deep-foreground hover:bg-deep/90">
               Add
             </Button>
@@ -819,7 +853,6 @@ function AddExpenseDialog({
           <DialogTitle className="font-display text-2xl">Log expense</DialogTitle>
         </DialogHeader>
         <form
-          className="space-y-4"
           onSubmit={async (e) => {
             e.preventDefault();
             const { error } = await supabase.from("expenses").insert({
@@ -837,52 +870,59 @@ function AddExpenseDialog({
             onAdded();
           }}
         >
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Date</Label>
-              <Input
-                type="date"
-                required
-                value={form.spent_on}
-                onChange={(e) => setForm({ ...form, spent_on: e.target.value })}
-              />
+          <ScrollableDialogBody>
+            <div className="space-y-4 py-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Date</Label>
+                  <Input
+                    type="date"
+                    required
+                    value={form.spent_on}
+                    onChange={(e) => setForm({ ...form, spent_on: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Amount ({currency})</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    value={form.amount}
+                    onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Category</Label>
+                <Select
+                  value={form.category}
+                  onValueChange={(v) => setForm({ ...form, category: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EXP_CATEGORIES.map((c) => (
+                      <SelectItem key={c} value={c} className="capitalize">
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Description</Label>
+                <Input
+                  placeholder="Ramen for two"
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Amount ({currency})</Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                required
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Category</Label>
-            <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {EXP_CATEGORIES.map((c) => (
-                  <SelectItem key={c} value={c} className="capitalize">
-                    {c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Description</Label>
-            <Input
-              placeholder="Ramen for two"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
-          </div>
-          <DialogFooter>
+          </ScrollableDialogBody>
+          <DialogFooter className="mt-4">
             <Button type="submit" className="bg-deep text-deep-foreground hover:bg-deep/90">
               Save
             </Button>
@@ -909,7 +949,6 @@ function AddPhotoDialog({ onAdd }: { onAdd: (url: string) => Promise<void> | voi
           <DialogTitle className="font-display text-2xl">Add a photo</DialogTitle>
         </DialogHeader>
         <form
-          className="space-y-4"
           onSubmit={async (e) => {
             e.preventDefault();
             if (!url.trim()) return;
@@ -923,21 +962,22 @@ function AddPhotoDialog({ onAdd }: { onAdd: (url: string) => Promise<void> | voi
             }
           }}
         >
-          <div className="space-y-1.5">
-            <Label>Image URL</Label>
-            <Input
-              type="url"
-              required
-              placeholder="https://…/photo.jpg"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Paste a direct link to a JPG/PNG/WEBP. Hosts like Imgur, Cloudinary, or Google Photos
-              (with sharing on) all work.
-            </p>
+          <div className="space-y-4 py-1">
+            <div className="space-y-1.5">
+              <Label>Image URL</Label>
+              <Input
+                type="url"
+                required
+                placeholder="https://…/photo.jpg"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Paste a direct link to a JPG/PNG/WEBP.
+              </p>
+            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="mt-4">
             <Button
               type="submit"
               disabled={busy}
